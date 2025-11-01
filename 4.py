@@ -3,6 +3,8 @@ import glob
 import os
 import numpy as np
 
+MIN_POSITIVE_VALUE = 1e-12
+
 PARAMETER_MAP = {
     'Area': 'Area',
     'Mean': 'MGV',
@@ -14,6 +16,12 @@ PARAMETER_MAP = {
 
 BASE_PARAMETERS_FOR_RATIO = ['Area', 'Mean', 'StdDev', 'IntDen', 'RawIntDen']
 BASE_PARAMETERS_ALL = ['Area', 'Mean', 'StdDev', 'IntDen', 'RawIntDen', 'Perim.']
+
+INTENSITY_PARAMETERS_RAW = ['Mean', 'IntDen', 'RawIntDen']
+INTENSITY_PARAMETERS_DERIVED = [
+    'MGV_nuclei', 'ID_nuclei', 'RawIntDen_nuclei', 'MGV_cytoplasm', 'ID_cytoplasm',
+    'MGV_average_nuclei', 'ID_average_nuclei', 'RawIntDen_average_nuclei'
+]
 
 input_dir = './output_ijm/'
 output_dir = './combined_output/'
@@ -105,7 +113,6 @@ def safe_ratio(numerator, denominator):
     return numerator / denominator
 
 def calculate_eop(P, A):
-    
     if P == 0 or A <= 0 or np.isnan(P) or np.isnan(A):
         return np.nan
         
@@ -117,6 +124,11 @@ def calculate_eop(P, A):
     eop = (P - P_circle) / P_circle
     return eop
 
+def apply_floor_correction(data_list):
+    return [
+        val if (np.isnan(val) or val >= MIN_POSITIVE_VALUE) else MIN_POSITIVE_VALUE
+        for val in data_list
+    ]
 
 for folder, condition in folder_map.items():
     print(f"Processing folder: {folder} ({condition})")
@@ -155,11 +167,12 @@ for folder, condition in folder_map.items():
         
         if np.isnan(background_mgv):
             background_mgv = 0.0
-            print(f"Warning: Background MGV not found or empty for cell {cell_index} in {folder}. Skipping background subtraction for this cell.")
+            print(f"Warning: Background MGV not found or empty for cell {cell_index} in {folder}. Skipping **intensity** background subtraction for this cell.")
 
 
-        if 'Mean' in cell_data and background_mgv != 0.0:
-            cell_data['Mean'] -= background_mgv
+        if background_mgv != 0.0:
+            if 'Mean' in cell_data:
+                cell_data['Mean'] -= background_mgv
             
             cell_area = cell_data.get('Area', 0.0)
             background_id_subtraction = background_mgv * cell_area
@@ -191,7 +204,8 @@ for folder, condition in folder_map.items():
 
 
         if not df_nuclei.empty and background_mgv != 0.0:
-            df_nuclei['Mean'] -= background_mgv
+            if 'Mean' in df_nuclei.columns:
+                df_nuclei['Mean'] -= background_mgv
             
             background_id_subtraction_series = background_mgv * df_nuclei['Area']
             
@@ -200,7 +214,7 @@ for folder, condition in folder_map.items():
             if 'RawIntDen' in df_nuclei.columns:
                 df_nuclei['RawIntDen'] -= background_id_subtraction_series
 
-
+        
         derived_values["#nuclei"] = len(df_nuclei)
         
         if derived_values["#nuclei"] > 0:
@@ -217,7 +231,7 @@ for folder, condition in folder_map.items():
                 single_Eop_data_by_condition[condition].append(eop_nuc)
             
             derived_values['area_nuclei'] = df_nuclei['Area'].sum()
-            derived_values['ID_nuclei'] = df_nuclei['IntDen'].sum()
+            derived_values['ID_nuclei'] = df_nuclei['IntDen'].sum() if 'IntDen' in df_nuclei.columns else 0.0
             derived_values['RawIntDen_nuclei'] = df_nuclei['RawIntDen'].sum() if 'RawIntDen' in df_nuclei.columns else 0.0
             
             derived_values['MGV_nuclei'] = safe_ratio(derived_values['ID_nuclei'], derived_values['area_nuclei'])
@@ -244,7 +258,8 @@ for folder, condition in folder_map.items():
                 cytoplasm_data = {}
             
             if cytoplasm_data and background_mgv != 0.0:
-                cytoplasm_data['Mean'] -= background_mgv
+                if 'Mean' in cytoplasm_data:
+                    cytoplasm_data['Mean'] -= background_mgv
                 
                 cyto_area = cytoplasm_data.get('Area', 0.0)
                 background_id_subtraction = background_mgv * cyto_area
@@ -265,31 +280,40 @@ for folder, condition in folder_map.items():
         for par in BASE_PARAMETERS_FOR_RATIO:
             mapped_name = PARAMETER_MAP.get(par, par)
             
-            cell_component = cell_data.get(par, np.nan)
+            cell_component_raw = cell_data.get(par, np.nan)
             
             if par == 'Area':
-                nucleus_component = derived_values['area_nuclei']
+                nucleus_component_raw = derived_values['area_nuclei']
             elif par == 'Mean':
-                nucleus_component = derived_values['MGV_nuclei']
+                nucleus_component_raw = derived_values['MGV_nuclei']
             elif par == 'StdDev':
-                nucleus_component = derived_values['StdDev_nuclei']
+                nucleus_component_raw = derived_values['StdDev_nuclei']
             elif par == 'IntDen':
-                nucleus_component = derived_values['ID_nuclei']
+                nucleus_component_raw = derived_values['ID_nuclei']
             elif par == 'RawIntDen':
-                nucleus_component = derived_values['RawIntDen_nuclei']
+                nucleus_component_raw = derived_values['RawIntDen_nuclei']
             else:
-                nucleus_component = np.nan
+                nucleus_component_raw = np.nan
                 
             if par == 'Area':
-                cytoplasm_component = derived_values['area_cytoplasm']
+                cytoplasm_component_raw = derived_values['area_cytoplasm']
             elif par == 'Mean':
-                cytoplasm_component = derived_values['MGV_cytoplasm']
+                cytoplasm_component_raw = derived_values['MGV_cytoplasm']
             elif par == 'StdDev':
-                cytoplasm_component = derived_values['StdDev_cytoplasm']
+                cytoplasm_component_raw = derived_values['StdDev_cytoplasm']
             elif par == 'IntDen':
-                cytoplasm_component = derived_values['ID_cytoplasm']
+                cytoplasm_component_raw = derived_values['ID_cytoplasm']
             else:
-                cytoplasm_component = np.nan
+                cytoplasm_component_raw = np.nan
+                
+            if par in INTENSITY_PARAMETERS_RAW:
+                nucleus_component = max(nucleus_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(nucleus_component_raw) else np.nan
+                cell_component = max(cell_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(cell_component_raw) else np.nan
+                cytoplasm_component = max(cytoplasm_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(cytoplasm_component_raw) else np.nan
+            else:
+                nucleus_component = nucleus_component_raw
+                cell_component = cell_component_raw
+                cytoplasm_component = cytoplasm_component_raw
                 
             nuc_cell_ratio_name = f'{mapped_name}_nuclei_cell_ratio'
             derived_values[nuc_cell_ratio_name] = safe_ratio(nucleus_component, cell_component)
@@ -297,7 +321,7 @@ for folder, condition in folder_map.items():
             if par != 'RawIntDen':
                 nuc_cyto_ratio_name = f'{mapped_name}_nuclei_cytoplasm_ratio'
                 derived_values[nuc_cyto_ratio_name] = safe_ratio(nucleus_component, cytoplasm_component)
-
+            
         for par in parameters:
             all_data_by_condition[condition][par].append(cell_data.get(par, np.nan))
         
@@ -307,7 +331,19 @@ for folder, condition in folder_map.items():
     field_cell_counts[folder] = processed_cells_in_field
 
 
-print("\nConsolidating and saving data...")
+print("\nApplying non-zero floor correction to intensity data...")
+
+for par in INTENSITY_PARAMETERS_RAW + INTENSITY_PARAMETERS_DERIVED:
+    if par in all_data_by_condition[all_conditions[0]]:
+        for cond in all_conditions:
+            all_data_by_condition[cond][par] = apply_floor_correction(all_data_by_condition[cond][par])
+
+for par_raw in INTENSITY_PARAMETERS_RAW:
+    for cond in all_conditions:
+        single_nuclei_data_by_parameter[par_raw][cond] = apply_floor_correction(single_nuclei_data_by_parameter[par_raw][cond])
+
+
+print("Consolidating and saving data...")
 all_parameters_to_save = parameters + all_derived_metrics
 
 for par in all_parameters_to_save:
@@ -446,6 +482,5 @@ df_field_counts = df_field_counts.dropna(how='all')
 csv_file_field_counts = os.path.join(output_dir, 'cells_per_field.csv')
 df_field_counts.to_csv(csv_file_field_counts, index=False)
 print(f"Saved processed cell counts per field (wide format) to: {csv_file_field_counts}")
-
 
 print("\nData consolidation complete. The combined data is in the 'combined_output' directory.")
