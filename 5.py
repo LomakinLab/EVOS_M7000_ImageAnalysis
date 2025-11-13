@@ -246,11 +246,22 @@ def analyze_and_plot(df_param, param_name, output_dir):
     ax.set_ylabel(f'{param_name}')
     ax.set_xlabel("Condition")
     
+    N_counts = stats_df.groupby('Condition')['Value'].count().to_dict()
+    
+    x_ticks = ax.get_xticks()
+    
+    for i, cond in enumerate(conditions_list):
+        n_val = N_counts.get(cond, 0)
+        ax.text(x_ticks[i], -0.1, f'N={n_val}', ha='center', va='top', fontsize=10, transform=ax.get_xaxis_transform())
+
+
     if ratio_lines:
         ratio_text = "\n".join(ratio_lines)
-        fig.text(0.5, 0.05, ratio_text, ha='center', va='bottom', fontsize=10, transform=fig.transFigure)
+        # Adjusted y coordinate for ratio text and tight_layout bottom margin
+        fig.text(0.5, 0.12, ratio_text, ha='center', va='bottom', fontsize=10, transform=fig.transFigure)
     
-    plt.tight_layout(rect=[0, 0.1, 1, 1])
+    # Reduced bottom rect to 0.15 to reduce blank space
+    plt.tight_layout(rect=[0, 0.15, 1, 1]) 
     plt.savefig(os.path.join(output_dir, f'{param_name}_{plot_type.lower()}.png'))
     plt.close(fig)
     
