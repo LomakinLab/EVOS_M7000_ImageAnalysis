@@ -4,8 +4,8 @@ from scipy.stats import linregress, spearmanr
 import numpy as np
 import os
 import seaborn as sns
-from sklearn.linear_model import RANSACRegressor
-from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import RANSACRegressor 
+from sklearn.preprocessing import StandardScaler 
 
 DATA_DIR = './combined_output'
 
@@ -15,10 +15,13 @@ FILE_MAPPING = {
     'ID nuclei': 'combined_ID_nuclei.csv',
     'ID cell': 'combined_ID.csv',
     'Number nuclei': 'combined_Number_nuclei.csv',
-    'Area average nuclei': 'combined_Area_average_nuclei.csv',
+    'Area average nuclei': 'combined_Area_average_nuclei.csv', 
+    'ID single nuclei': 'combined_ID_single_nuclei.csv',
+    'Area single nuclei': 'combined_Area_single_nuclei.csv',
 }
 
 def load_and_combine_data(file_mapping, data_dir):
+    
     all_data = {}
     all_features = file_mapping.keys()
     
@@ -45,7 +48,7 @@ def load_and_combine_data(file_mapping, data_dir):
             
         except FileNotFoundError:
             print(f"FATAL ERROR: Required file not found: {filepath}.")
-            return None
+            return None 
         except Exception as e:
             print(f"FATAL ERROR while processing {filepath}: {e}")
             return None
@@ -56,20 +59,20 @@ def load_and_combine_data(file_mapping, data_dir):
         
     master_df = pd.concat(all_data.values(), axis=1).reset_index()
 
-    master_df.dropna(subset=['Condition'], inplace=True)
+    master_df.dropna(subset=['Condition'], inplace=True) 
     
     return master_df
 
 
 def calculate_bivariate_stats(data_df, x_col, y_col):
     
-    sub_df = data_df[[x_col, y_col]].dropna().copy()
+    subset_df = data_df[[x_col, y_col]].dropna().copy()
     
-    if len(sub_df) < 3:
+    if len(subset_df) < 3:
         return None
         
-    X_full = sub_df[x_col].values.reshape(-1, 1)
-    Y_full = sub_df[y_col].values
+    X_full = subset_df[x_col].values.reshape(-1, 1)
+    Y_full = subset_df[y_col].values
     
     original_n = len(X_full)
 
@@ -80,9 +83,9 @@ def calculate_bivariate_stats(data_df, x_col, y_col):
         Y_scaled = scaler_y.fit_transform(Y_full.reshape(-1, 1)).flatten()
         
         ransac = RANSACRegressor(
-            min_samples=2,
-            max_trials=1000,
-            random_state=42,
+            min_samples=2, 
+            max_trials=1000, 
+            random_state=42, 
             residual_threshold=2.0
         )
         ransac.fit(X_scaled, Y_scaled)
@@ -122,14 +125,14 @@ def calculate_bivariate_stats(data_df, x_col, y_col):
     return {
         'n_points': n_points_filtered,
         'original_n': original_n,
-        'X': X,
-        'Y': Y,
+        'X': X, 
+        'Y': Y, 
         'slope': slope,
         'intercept': intercept,
         'rho': rho,
         'p_value_raw': p_value_spearman,
         'line': line,
-        'n_removed': n_removed
+        'n_removed': n_removed 
     }
 
 def plot_correlation_per_condition(df_full, x_col, y_col, condition, global_limits):
@@ -151,7 +154,7 @@ def plot_correlation_per_condition(df_full, x_col, y_col, condition, global_limi
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
 
     ax.scatter(stats['X'], stats['Y'], s=50, alpha=0.7, edgecolors='k', color=sns.color_palette("Set1")[0],
-               label=f"Measurements (n={stats['n_points']})")
+                label=f"Measurements (n={stats['n_points']})")
     
     ax.plot(stats['X'], stats['line'], color='red', linestyle='-', linewidth=2)
     
@@ -170,18 +173,18 @@ def plot_correlation_per_condition(df_full, x_col, y_col, condition, global_limi
 
     stat_text = (
         f'n (used): {stats["n_points"]} (removed: {n_removed})\n'
-        f'Slope (RANSAC): {slope_formatted}\n'
+        f'Slope (RANSAC): {slope_formatted}\n' 
         r'Spearman $\rho$: ' + f'{stats["rho"]:.3f}\n'
         r'P-value: ' + f'{stats["p_value_raw"]:.3e}'
     )
     
-    ax.text(0.95, 0.05, stat_text,
-            transform=ax.transAxes,
-            fontsize=10,
-            verticalalignment='bottom',
+    ax.text(0.95, 0.05, stat_text, 
+            transform=ax.transAxes, 
+            fontsize=10, 
+            verticalalignment='bottom', 
             horizontalalignment='right',
             color=sig_color,
-            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9,
+            bbox=dict(boxstyle="round,pad=0.5", fc="white", alpha=0.9, 
                       edgecolor=sig_color if stats['p_value_raw'] < 0.05 else 'gray'))
 
     ax.set_title(f'{y_col} vs. {x_col} ({condition}) - RANSAC Filtered', fontsize=14, fontweight='bold')
@@ -194,7 +197,7 @@ def plot_correlation_per_condition(df_full, x_col, y_col, condition, global_limi
     safe_y_col = y_col.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
     safe_condition = condition.replace(' ', '_').replace('(', '').replace(')', '').replace('/', '_')
     
-    filename = f'{safe_y_col}_vs_{safe_x_col}_{safe_condition}_RANSAC_Filtered.png'
+    filename = f'{safe_y_col}_vs_{safe_x_col}_{safe_condition}_RANSAC_Filtered.png' 
     plt.savefig(os.path.join(output_dir, filename), dpi=300, bbox_inches='tight')
     plt.close(fig)
     print(f"Saved plot: {filename}")
@@ -202,16 +205,18 @@ def plot_correlation_per_condition(df_full, x_col, y_col, condition, global_limi
 if __name__ == '__main__':
     
     CORRELATION_PAIRS = [
-        ('Area nuclei', 'Area cell'),
-        ('ID nuclei', 'Area nuclei'),
-        ('ID nuclei', 'Area cell'),
-        ('ID cell', 'Area cell'),
-        ('Number nuclei', 'Area cell'),
-        ('Number nuclei', 'Area nuclei'),
-        ('Number nuclei', 'Area average nuclei'),
+        ('ID single nuclei', 'Area single nuclei'), 
+        ('ID nuclei', 'Number nuclei'),             
+        ('Area nuclei', 'Area cell'),  
+        ('ID nuclei', 'Area nuclei'),  
+        ('ID nuclei', 'Area cell'),    
+        ('ID cell', 'Area cell'),      
+        ('Number nuclei', 'Area cell'), 
+        ('Number nuclei', 'Area nuclei'), 
+        ('Number nuclei', 'Area average nuclei'), 
     ]
     
-    data_df = load_and_combine_data(FILE_MAPPING, DATA_DIR)
+    data_df = load_and_combine_data(FILE_MAPPING, DATA_DIR) 
 
     if data_df is None:
         print("\nAnalysis terminated due to critical data loading errors. Please ensure all files exist in the correct directory.")
@@ -240,7 +245,7 @@ if __name__ == '__main__':
     for y_col, x_col in CORRELATION_PAIRS:
         all_x_inliers = []
         all_y_inliers = []
-        pair_key = (x_col, y_col)
+        pair_key = (x_col, y_col) 
 
         for condition in unique_conditions:
             df_condition = data_df[data_df['Condition'] == condition]
@@ -282,9 +287,9 @@ if __name__ == '__main__':
              y_padding = y_range * 0.05
              
              GLOBAL_INLIER_LIMITS[pair_key] = {
-                'x_lim': (x_min_global - x_padding, x_max_global + x_padding),
-                'y_lim': (y_min_global - y_padding, y_max_global + y_padding)
-               }
+                 'x_lim': (x_min_global - x_padding, x_max_global + x_padding),
+                 'y_lim': (y_min_global - y_padding, y_max_global + y_padding)
+                }
 
 
     print("\n--- Starting Plotting Phase ---")
@@ -296,7 +301,7 @@ if __name__ == '__main__':
         if limits is None:
              print(f"Skipping plotting for {y_col} vs {x_col}: Limits could not be determined.")
              continue
-            
+             
         for condition in unique_conditions:
             plot_correlation_per_condition(data_df, x_col, y_col, condition, limits)
 
