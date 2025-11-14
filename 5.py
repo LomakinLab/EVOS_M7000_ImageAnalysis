@@ -138,7 +138,7 @@ def analyze_and_plot(df_param, param_name, output_dir):
             current_val = stats_df[stats_df['Condition'] == cond]['Value'].agg(agg_func)
             if current_val is not None:
                 ratio = current_val / ref_val
-                ratio_lines.append(f"Ratio {cond} vs {first_condition} = {ratio:.3f}")
+                ratio_lines.append(f"Fold-Change {cond} vs {first_condition} = {ratio:.3f}")
     
     try:
         fig, ax = plt.subplots(figsize=(n_conditions * 3, 6))
