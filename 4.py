@@ -143,7 +143,8 @@ for folder, condition in folder_map.items():
         derived_values = {par: np.nan if par in ratio_parameters or par == 'Eop' or par in avg_nuclei_parameters else 0.0 for par in all_derived_metrics}
         
         try:
-            df_cell = pd.read_csv(cell_file)
+            normalized_cell_file = os.path.normpath(cell_file)
+            df_cell = pd.read_csv(normalized_cell_file)
             if 'Unnamed: 0' in df_cell.columns:
                 df_cell.drop(columns=['Unnamed: 0'], inplace=True)
             cell_data = df_cell.iloc[0].to_dict()
@@ -154,20 +155,35 @@ for folder, condition in folder_map.items():
         cell_index = os.path.basename(cell_file).split('_')[1].split('.')[0]
 
         background_file_name = f'background_for_cell_{cell_index}.csv'
-        background_file_path = os.path.join(folder_path, background_file_name)
+        
+        background_file_path_raw = os.path.join(folder_path, background_file_name)
+        background_file_path = os.path.normpath(background_file_path_raw)
+        
 
         background_mgv = np.nan
+        background_reason = "file does not exist"
+        
         if os.path.exists(background_file_path):
             try:
-                df_bg = pd.read_csv(background_file_path)
-                if not df_bg.empty and 'Mean' in df_bg.columns:
+                df_bg = pd.read_csv(background_file_path, index_col=0)
+                
+                if df_bg.empty:
+                    background_reason = "file is empty"
+                elif 'Mean' not in df_bg.columns:
+                    background_reason = f"missing 'Mean' column. Found columns: {list(df_bg.columns)}"
+                else:
                     background_mgv = df_bg.iloc[0].get('Mean', np.nan)
+                    if np.isnan(background_mgv):
+                         background_reason = "'Mean' value is NaN"
+
             except pd.errors.EmptyDataError:
+                background_reason = "EmptyDataError when reading"
                 background_mgv = np.nan
         
-        if np.isnan(background_mgv):
-            background_mgv = 0.0
-            print(f"Warning: Background MGV not found or empty for cell {cell_index} in {folder}. Skipping **intensity** background subtraction for this cell.")
+        if np.isnan(background_mgv) or background_mgv == 0.0:
+            if np.isnan(background_mgv):
+                background_mgv = 0.0
+            print(f"Warning: Background MGV {background_file_path} not found, empty, or value is 0.0 ({background_reason}) for cell {cell_file} in {folder}. Skipping **intensity** background subtraction for this cell.")
 
 
         if background_mgv != 0.0:
@@ -191,7 +207,7 @@ for folder, condition in folder_map.items():
             derived_values['Eop'] = np.nan
             
         nuclei_file_name = f'nuclei_for_cell_{cell_index}.csv'
-        nuclei_file_path = os.path.join(folder_path, nuclei_file_name)
+        nuclei_file_path = os.path.normpath(os.path.join(folder_path, nuclei_file_name))
         
         df_nuclei = pd.DataFrame()
         if os.path.exists(nuclei_file_path):
@@ -245,7 +261,7 @@ for folder, condition in folder_map.items():
                     derived_values[avg_param_name] = avg_val
 
         cytoplasm_file_name = f'cytoplasm_for_cell_{cell_index}.csv'
-        cytoplasm_file_path = os.path.join(folder_path, cytoplasm_file_name)
+        cytoplasm_file_path = os.path.normpath(os.path.join(folder_path, cytoplasm_file_name))
         
         cytoplasm_data = {}
         if os.path.exists(cytoplasm_file_path):
