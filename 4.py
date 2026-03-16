@@ -6,106 +6,18 @@ import numpy as np
 MIN_POSITIVE_VALUE = 1e-12
 
 PARAMETER_MAP = {
-    'Area': 'Area',
-    'Mean': 'MGV',
-    'StdDev': 'StdDev',
-    'IntDen': 'ID',
-    'RawIntDen': 'RawIntDen',
-    'Perim.': 'Perimeter'
+    'Area': 'Area', 'Mean': 'MGV', 'StdDev': 'StdDev',
+    'IntDen': 'ID', 'RawIntDen': 'RawIntDen', 'Perim.': 'Perimeter'
 }
 
+# Specification Lists
 BASE_PARAMETERS_FOR_RATIO = ['Area', 'Mean', 'StdDev', 'IntDen', 'RawIntDen']
 BASE_PARAMETERS_ALL = ['Area', 'Mean', 'StdDev', 'IntDen', 'RawIntDen', 'Perim.']
-
 INTENSITY_PARAMETERS_RAW = ['Mean', 'IntDen', 'RawIntDen']
 INTENSITY_PARAMETERS_DERIVED = [
     'MGV_nuclei', 'ID_nuclei', 'RawIntDen_nuclei', 'MGV_cytoplasm', 'ID_cytoplasm',
     'MGV_average_nuclei', 'ID_average_nuclei', 'RawIntDen_average_nuclei'
 ]
-
-input_dir = './output_ijm/'
-output_dir = './combined_output/'
-os.makedirs(output_dir, exist_ok=True)
-
-folder_map = {}
-conditions_file = 'conditions.txt'
-if os.path.exists(conditions_file):
-    with open(conditions_file, 'r') as f:
-        lines = f.readlines()
-        
-    for line in lines:
-        if ':' in line:
-            condition_name, folder_prefixes_str = line.strip().split(':', 1)
-            folder_prefixes = [prefix.strip() for prefix in folder_prefixes_str.replace(';', '').split(',')]
-            
-            for folder in os.listdir(input_dir):
-                if os.path.isdir(os.path.join(input_dir, folder)):
-                    for prefix in folder_prefixes:
-                        if folder.upper().startswith(prefix.upper()):
-                            folder_map[folder] = condition_name
-                            break
-else:
-    print(f"Error: '{conditions_file}' not found. Please create it with the specified format.")
-    folders = [f for f in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, f))]
-    for folder in folders:
-        if folder.upper().startswith('C'):
-            folder_map[folder] = 'Ctrl'
-        elif folder.upper().startswith('D'):
-            folder_map[folder] = 'DTX'
-
-all_conditions = sorted(list(set(folder_map.values())))
-print(f"Detected conditions: {all_conditions}")
-
-parameters = []
-
-derived_parameters = [
-    "#nuclei", "area_nuclei", "MGV_nuclei", "ID_nuclei", "StdDev_nuclei", "RawIntDen_nuclei",
-    "area_cytoplasm", "MGV_cytoplasm", "ID_cytoplasm", "StdDev_cytoplasm",
-    "Eop"
-]
-
-ratio_parameters = []
-for par in BASE_PARAMETERS_FOR_RATIO:
-    mapped_name = PARAMETER_MAP.get(par, par)
-    ratio_parameters.append(f'{mapped_name}_nuclei_cell_ratio')
-    if par != 'RawIntDen':
-        ratio_parameters.append(f'{mapped_name}_nuclei_cytoplasm_ratio')
-
-avg_nuclei_parameters = []
-for par in BASE_PARAMETERS_ALL:
-    mapped_name = PARAMETER_MAP.get(par, par)
-    avg_nuclei_parameters.append(f'{mapped_name}_average_nuclei')
-
-all_derived_metrics = derived_parameters + ratio_parameters + avg_nuclei_parameters
-
-if os.path.exists(input_dir) and os.listdir(input_dir):
-    first_folder = next((f for f in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, f))), None)
-    if first_folder:
-        first_folder_path = os.path.join(input_dir, first_folder)
-        first_cell_file = glob.glob(os.path.join(first_folder_path, 'cell_*.csv'))
-        
-        if first_cell_file:
-            df_temp = pd.read_csv(first_cell_file[0])
-            if 'Unnamed: 0' in df_temp.columns:
-                df_temp.drop(columns=['Unnamed: 0'], inplace=True)
-            parameters = [col for col in df_temp.columns if not col.startswith('Unnamed') and col.strip()]
-
-all_data_by_condition = {
-    cond: {par: [] for par in parameters + all_derived_metrics} for cond in all_conditions
-}
-
-single_nuclei_data_by_parameter = {
-    'Area': {cond: [] for cond in all_conditions},
-    'Mean': {cond: [] for cond in all_conditions},
-    'StdDev': {cond: [] for cond in all_conditions},
-    'IntDen': {cond: [] for cond in all_conditions},
-    'RawIntDen': {cond: [] for cond in all_conditions},
-    'Perim.': {cond: [] for cond in all_conditions}
-}
-
-single_Eop_data_by_condition = {cond: [] for cond in all_conditions}
-
-field_cell_counts = {}
 
 def safe_ratio(numerator, denominator):
     if denominator == 0 or np.isnan(numerator) or np.isnan(denominator):
@@ -115,388 +27,168 @@ def safe_ratio(numerator, denominator):
 def calculate_eop(P, A):
     if P == 0 or A <= 0 or np.isnan(P) or np.isnan(A):
         return np.nan
-        
     P_circle = 2 * np.sqrt(np.pi * A)
-    
-    if P_circle == 0:
-        return np.nan
-        
-    eop = (P - P_circle) / P_circle
-    return eop
+    return (P - P_circle) / P_circle if P_circle != 0 else np.nan
 
 def apply_floor_correction(data_list):
-    return [
-        val if (np.isnan(val) or val >= MIN_POSITIVE_VALUE) else MIN_POSITIVE_VALUE
-        for val in data_list
-    ]
+    return [val if (pd.isna(val) or val >= MIN_POSITIVE_VALUE) else MIN_POSITIVE_VALUE for val in data_list]
 
-for folder, condition in folder_map.items():
-    print(f"Processing folder: {folder} ({condition})")
-    
-    folder_path = os.path.join(input_dir, folder)
-    cell_files = sorted(glob.glob(os.path.join(folder_path, 'cell_*.csv')))
-    
-    processed_cells_in_field = 0
-    
-    for cell_file in cell_files:
-        
-        derived_values = {par: np.nan if par in ratio_parameters or par == 'Eop' or par in avg_nuclei_parameters else 0.0 for par in all_derived_metrics}
-        
-        try:
-            normalized_cell_file = os.path.normpath(cell_file)
-            df_cell = pd.read_csv(normalized_cell_file)
-            if 'Unnamed: 0' in df_cell.columns:
-                df_cell.drop(columns=['Unnamed: 0'], inplace=True)
-            cell_data = df_cell.iloc[0].to_dict()
-        except pd.errors.EmptyDataError:
-            print(f"Warning: Skipping empty cell file {cell_file}")
-            continue
+# --- 1. GLOBAL REPLICATE CONFIGURATION ---
+search_root = os.path.abspath('.')
+global_cond_file = os.path.join(search_root, 'conditions.txt')
+condition_to_replicates = {}
 
-        cell_index = os.path.basename(cell_file).split('_')[1].split('.')[0]
-
-        background_file_name = f'background_for_cell_{cell_index}.csv'
-        
-        background_file_path_raw = os.path.join(folder_path, background_file_name)
-        background_file_path = os.path.normpath(background_file_path_raw)
-        
-
-        background_mgv = np.nan
-        background_reason = "file does not exist"
-        
-        if os.path.exists(background_file_path):
-            try:
-                df_bg = pd.read_csv(background_file_path, index_col=0)
-                
-                if df_bg.empty:
-                    background_reason = "file is empty"
-                elif 'Mean' not in df_bg.columns:
-                    background_reason = f"missing 'Mean' column. Found columns: {list(df_bg.columns)}"
-                else:
-                    background_mgv = df_bg.iloc[0].get('Mean', np.nan)
-                    if np.isnan(background_mgv):
-                         background_reason = "'Mean' value is NaN"
-
-            except pd.errors.EmptyDataError:
-                background_reason = "EmptyDataError when reading"
-                background_mgv = np.nan
-        
-        if np.isnan(background_mgv) or background_mgv == 0.0:
-            if np.isnan(background_mgv):
-                background_mgv = 0.0
-            print(f"Warning: Background MGV {background_file_path} not found, empty, or value is 0.0 ({background_reason}) for cell {cell_file} in {folder}. Skipping **intensity** background subtraction for this cell.")
-
-
-        if background_mgv != 0.0:
-            if 'Mean' in cell_data:
-                cell_data['Mean'] -= background_mgv
-            
-            cell_area = cell_data.get('Area', 0.0)
-            background_id_subtraction = background_mgv * cell_area
-            
-            if 'IntDen' in cell_data:
-                cell_data['IntDen'] -= background_id_subtraction
-            if 'RawIntDen' in cell_data:
-                cell_data['RawIntDen'] -= background_id_subtraction
-
-
-        if 'Perim.' in cell_data and 'Area' in cell_data:
-            P_cell = cell_data['Perim.']
-            A_cell = cell_data['Area']
-            derived_values['Eop'] = calculate_eop(P_cell, A_cell)
-        else:
-            derived_values['Eop'] = np.nan
-            
-        nuclei_file_name = f'nuclei_for_cell_{cell_index}.csv'
-        nuclei_file_path = os.path.normpath(os.path.join(folder_path, nuclei_file_name))
-        
-        df_nuclei = pd.DataFrame()
-        if os.path.exists(nuclei_file_path):
-            try:
-                df_nuclei = pd.read_csv(nuclei_file_path)
-                if 'Unnamed: 0' in df_nuclei.columns:
-                    df_nuclei.drop(columns=['Unnamed: 0'], inplace=True)
-            except pd.errors.EmptyDataError:
-                df_nuclei = pd.DataFrame()
-
-
-        if not df_nuclei.empty and background_mgv != 0.0:
-            if 'Mean' in df_nuclei.columns:
-                df_nuclei['Mean'] -= background_mgv
-            
-            background_id_subtraction_series = background_mgv * df_nuclei['Area']
-            
-            if 'IntDen' in df_nuclei.columns:
-                df_nuclei['IntDen'] -= background_id_subtraction_series
-            if 'RawIntDen' in df_nuclei.columns:
-                df_nuclei['RawIntDen'] -= background_id_subtraction_series
-
-        
-        derived_values["#nuclei"] = len(df_nuclei)
-        
-        if derived_values["#nuclei"] > 0:
-            processed_cells_in_field += 1
-
-            for _, row in df_nuclei.iterrows():
-                for par_raw in BASE_PARAMETERS_ALL:
-                    if par_raw in row:
-                        single_nuclei_data_by_parameter[par_raw][condition].append(row[par_raw])
-                
-                P_nuc = row.get('Perim.', np.nan)
-                A_nuc = row.get('Area', 0.0)
-                eop_nuc = calculate_eop(P_nuc, A_nuc)
-                single_Eop_data_by_condition[condition].append(eop_nuc)
-            
-            derived_values['area_nuclei'] = df_nuclei['Area'].sum()
-            derived_values['ID_nuclei'] = df_nuclei['IntDen'].sum() if 'IntDen' in df_nuclei.columns else 0.0
-            derived_values['RawIntDen_nuclei'] = df_nuclei['RawIntDen'].sum() if 'RawIntDen' in df_nuclei.columns else 0.0
-            
-            derived_values['MGV_nuclei'] = safe_ratio(derived_values['ID_nuclei'], derived_values['area_nuclei'])
-            derived_values['StdDev_nuclei'] = df_nuclei['StdDev'].mean() if 'StdDev' in df_nuclei.columns else np.nan
-            
-            for par_raw in BASE_PARAMETERS_ALL:
-                if par_raw in df_nuclei.columns:
-                    avg_val = df_nuclei[par_raw].mean()
-                    mapped_name = PARAMETER_MAP.get(par_raw, par_raw)
-                    avg_param_name = f'{mapped_name}_average_nuclei'
-                    derived_values[avg_param_name] = avg_val
-
-        cytoplasm_file_name = f'cytoplasm_for_cell_{cell_index}.csv'
-        cytoplasm_file_path = os.path.normpath(os.path.join(folder_path, cytoplasm_file_name))
-        
-        cytoplasm_data = {}
-        if os.path.exists(cytoplasm_file_path):
-            try:
-                df_cytoplasm = pd.read_csv(cytoplasm_file_path)
-                if 'Unnamed: 0' in df_cytoplasm.columns:
-                    df_cytoplasm.drop(columns=['Unnamed: 0'], inplace=True)
-                cytoplasm_data = df_cytoplasm.iloc[0].to_dict()
-            except pd.errors.EmptyDataError:
-                cytoplasm_data = {}
-            
-            if cytoplasm_data and background_mgv != 0.0:
-                if 'Mean' in cytoplasm_data:
-                    cytoplasm_data['Mean'] -= background_mgv
-                
-                cyto_area = cytoplasm_data.get('Area', 0.0)
-                background_id_subtraction = background_mgv * cyto_area
-                
-                if 'IntDen' in cytoplasm_data:
-                    cytoplasm_data['IntDen'] -= background_id_subtraction
-                if 'RawIntDen' in cytoplasm_data:
-                    cytoplasm_data['RawIntDen'] -= background_id_subtraction
-
-
-            if cytoplasm_data:
-                derived_values['area_cytoplasm'] = cytoplasm_data.get('Area', np.nan)
-                derived_values['MGV_cytoplasm'] = cytoplasm_data.get('Mean', np.nan)
-                derived_values['ID_cytoplasm'] = cytoplasm_data.get('IntDen', np.nan)
-                derived_values['StdDev_cytoplasm'] = cytoplasm_data.get('StdDev', np.nan)
-
-
-        for par in BASE_PARAMETERS_FOR_RATIO:
-            mapped_name = PARAMETER_MAP.get(par, par)
-            
-            cell_component_raw = cell_data.get(par, np.nan)
-            
-            if par == 'Area':
-                nucleus_component_raw = derived_values['area_nuclei']
-            elif par == 'Mean':
-                nucleus_component_raw = derived_values['MGV_nuclei']
-            elif par == 'StdDev':
-                nucleus_component_raw = derived_values['StdDev_nuclei']
-            elif par == 'IntDen':
-                nucleus_component_raw = derived_values['ID_nuclei']
-            elif par == 'RawIntDen':
-                nucleus_component_raw = derived_values['RawIntDen_nuclei']
-            else:
-                nucleus_component_raw = np.nan
-                
-            if par == 'Area':
-                cytoplasm_component_raw = derived_values['area_cytoplasm']
-            elif par == 'Mean':
-                cytoplasm_component_raw = derived_values['MGV_cytoplasm']
-            elif par == 'StdDev':
-                cytoplasm_component_raw = derived_values['StdDev_cytoplasm']
-            elif par == 'IntDen':
-                cytoplasm_component_raw = derived_values['ID_cytoplasm']
-            else:
-                cytoplasm_component_raw = np.nan
-                
-            if par in INTENSITY_PARAMETERS_RAW:
-                nucleus_component = max(nucleus_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(nucleus_component_raw) else np.nan
-                cell_component = max(cell_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(cell_component_raw) else np.nan
-                cytoplasm_component = max(cytoplasm_component_raw, MIN_POSITIVE_VALUE) if not np.isnan(cytoplasm_component_raw) else np.nan
-            else:
-                nucleus_component = nucleus_component_raw
-                cell_component = cell_component_raw
-                cytoplasm_component = cytoplasm_component_raw
-                
-            nuc_cell_ratio_name = f'{mapped_name}_nuclei_cell_ratio'
-            derived_values[nuc_cell_ratio_name] = safe_ratio(nucleus_component, cell_component)
-            
-            if par != 'RawIntDen':
-                nuc_cyto_ratio_name = f'{mapped_name}_nuclei_cytoplasm_ratio'
-                derived_values[nuc_cyto_ratio_name] = safe_ratio(nucleus_component, cytoplasm_component)
-            
-        for par in parameters:
-            all_data_by_condition[condition][par].append(cell_data.get(par, np.nan))
-        
-        for par in all_derived_metrics:
-            all_data_by_condition[condition][par].append(derived_values[par])
-
-    field_cell_counts[folder] = processed_cells_in_field
-
-
-print("\nApplying non-zero floor correction to intensity data...")
-
-for par in INTENSITY_PARAMETERS_RAW + INTENSITY_PARAMETERS_DERIVED:
-    if par in all_data_by_condition[all_conditions[0]]:
-        for cond in all_conditions:
-            all_data_by_condition[cond][par] = apply_floor_correction(all_data_by_condition[cond][par])
-
-for par_raw in INTENSITY_PARAMETERS_RAW:
-    for cond in all_conditions:
-        single_nuclei_data_by_parameter[par_raw][cond] = apply_floor_correction(single_nuclei_data_by_parameter[par_raw][cond])
-
-
-print("Consolidating and saving data...")
-all_parameters_to_save = parameters + all_derived_metrics
-
-for par in all_parameters_to_save:
-    if not par.strip():
-        continue
-        
-    data_for_df = {
-        cond: pd.Series(all_data_by_condition[cond][par])
-        for cond in all_conditions
-    }
-    df_par = pd.DataFrame(data_for_df)
-
-    df_par = df_par.dropna(how='all')
-
-    if par in PARAMETER_MAP:
-        output_name = PARAMETER_MAP[par]
-    elif par.startswith('#'):
-        output_name = par.replace("#", "Number_")
-    else:
-        output_name = par
-        
-    csv_file = os.path.join(output_dir, f'combined_{output_name}.csv')
-    df_par.to_csv(csv_file, index=False)
-    print(f"Saved {par} data to: {csv_file}")
-
-
-print("\nSaving all individual nucleus RAW data (per nucleus, by parameter)...")
-
-for param_raw, data_by_cond in single_nuclei_data_by_parameter.items():
-    if not any(data_by_cond.values()):
-        continue
-        
-    data_by_cond_series = {
-        cond: pd.Series(data_by_cond[cond])
-        for cond in all_conditions
-    }
-    df_par_single = pd.DataFrame(data_by_cond_series)
-
-    mapped_name = PARAMETER_MAP.get(param_raw, param_raw)
-    output_name = f"{mapped_name}_single_nuclei"
-    
-    csv_file = os.path.join(output_dir, f'combined_{output_name}.csv')
-    df_par_single.to_csv(csv_file, index=False)
-    print(f"Saved Single Nucleus {param_raw} data to: {csv_file}")
-
-print("\nSaving individual nucleus Eop data (per nucleus)...")
-if any(single_Eop_data_by_condition.values()):
-    data_by_cond_series = {
-        cond: pd.Series(single_Eop_data_by_condition[cond])
-        for cond in all_conditions
-    }
-    df_eop_single = pd.DataFrame(data_by_cond_series)
-    
-    output_name = "Eop_single_nuclei"
-    csv_file = os.path.join(output_dir, f'combined_{output_name}.csv')
-    df_eop_single.to_csv(csv_file, index=False)
-    print(f"Saved Single Nucleus Eop data to: {csv_file}")
+if os.path.exists(global_cond_file):
+    with open(global_cond_file, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line or ':' not in line: continue
+            c_name, content = line.split(':', 1)
+            clean_content = content.replace(';', '').strip()
+            replicates_list = [r.strip() for r in clean_content.split(',') if r.strip()]
+            condition_to_replicates[c_name.strip()] = replicates_list
+    print(f"Loaded global conditions from: {global_cond_file}")
 else:
-    print("Skipped Eop calculation for Single Nuclei: No nucleus data found.")
+    print("CRITICAL: conditions.txt not found in root.")
 
+all_conditions = sorted(condition_to_replicates.keys())
 
-print("\nCalculating and saving CoV data...")
+# --- 2. EXPERIMENT DISCOVERY ---
+subfolders = [f.path for f in os.scandir(search_root) if f.is_dir()]
+valid_exp_folders = [f for f in subfolders if os.path.exists(os.path.join(f, 'output_ijm'))]
 
-data_mean_cell_series = {cond: pd.Series(all_data_by_condition[cond]['Mean']) for cond in all_conditions}
-data_stddev_cell_series = {cond: pd.Series(all_data_by_condition[cond]['StdDev']) for cond in all_conditions}
-
-df_mean_cell = pd.DataFrame(data_mean_cell_series)
-df_stddev_cell = pd.DataFrame(data_stddev_cell_series)
-
-df_cov_cell = pd.DataFrame()
-
-for cond in all_conditions:
-    cov_series = df_stddev_cell[cond] / df_mean_cell[cond]
-    df_cov_cell[cond] = cov_series.replace([np.inf, -np.inf], np.nan)
-
-df_cov_cell = df_cov_cell.dropna(how='all')
-csv_file_cell_cov = os.path.join(output_dir, 'combined_CoV_cell.csv')
-df_cov_cell.to_csv(csv_file_cell_cov, index=False)
-print(f"Saved CoV for Cell to: {csv_file_cell_cov}")
-
-
-data_mean_cyto_series = {cond: pd.Series(all_data_by_condition[cond]['MGV_cytoplasm']) for cond in all_conditions}
-data_stddev_cyto_series = {cond: pd.Series(all_data_by_condition[cond]['StdDev_cytoplasm']) for cond in all_conditions}
-
-df_mean_cyto = pd.DataFrame(data_mean_cyto_series)
-df_stddev_cyto = pd.DataFrame(data_stddev_cyto_series)
-
-df_cov_cyto = pd.DataFrame()
-
-for cond in all_conditions:
-    cov_series = df_stddev_cyto[cond] / df_mean_cyto[cond]
-    df_cov_cyto[cond] = cov_series.replace([np.inf, -np.inf], np.nan)
-
-df_cov_cyto = df_cov_cyto.dropna(how='all')
-csv_file_cyto_cov = os.path.join(output_dir, 'combined_CoV_cytoplasm.csv')
-df_cov_cyto.to_csv(csv_file_cyto_cov, index=False)
-print(f"Saved CoV for Cytoplasm to: {csv_file_cyto_cov}")
-
-
-cov_nuclei_results = {}
-for cond in all_conditions:
-    mean_data = pd.Series(single_nuclei_data_by_parameter['Mean'][cond])
-    stddev_data = pd.Series(single_nuclei_data_by_parameter['StdDev'][cond])
+for exp_folder in valid_exp_folders:
+    input_dir = os.path.join(exp_folder, 'output_ijm')
+    output_dir = os.path.join(exp_folder, 'combined_output')
+    os.makedirs(output_dir, exist_ok=True)
     
-    if not mean_data.empty:
-        cov_series = stddev_data / mean_data
-        cov_nuclei_results[cond] = cov_series.replace([np.inf, -np.inf], np.nan)
+    print(f"Processing experiment: {os.path.basename(exp_folder)}")
 
-if cov_nuclei_results:
-    df_cov_nuclei = pd.DataFrame(cov_nuclei_results)
-    df_cov_nuclei = df_cov_nuclei.dropna(how='all')
-    csv_file_nuclei_cov = os.path.join(output_dir, 'combined_CoV_nuclei_single.csv')
-    df_cov_nuclei.to_csv(csv_file_nuclei_cov, index=False)
-    print(f"Saved CoV for Single Nuclei to: {csv_file_nuclei_cov}")
-else:
-    print("Skipped CoV calculation for Single Nuclei: No nucleus data found.")
+    derived_metrics = ["#nuclei", "area_nuclei", "MGV_nuclei", "ID_nuclei", "StdDev_nuclei", "RawIntDen_nuclei", 
+                      "area_cytoplasm", "MGV_cytoplasm", "ID_cytoplasm", "StdDev_cytoplasm", "Eop", "CoV_nuclei_area"]
+    
+    ratio_params = []
+    for par in BASE_PARAMETERS_FOR_RATIO:
+        m = PARAMETER_MAP.get(par, par)
+        ratio_params.append(f'{m}_nuclei_cell_ratio')
+        if par != 'RawIntDen': ratio_params.append(f'{m}_nuclei_cytoplasm_ratio')
 
-print("\nSaving Cells per Field data in quantifiable (wide) format...")
+    avg_nuc_params = [f'{PARAMETER_MAP.get(p, p)}_average_nuclei' for p in BASE_PARAMETERS_ALL]
+    track_params = BASE_PARAMETERS_ALL + derived_metrics + ratio_params + avg_nuc_params
 
-counts_by_condition = {cond: [] for cond in all_conditions}
-fields_processed = sorted(field_cell_counts.keys())
+    all_data = {c: {p: [] for p in track_params} for c in all_conditions}
+    single_nuc_data = {p: {c: [] for c in all_conditions} for p in BASE_PARAMETERS_ALL}
+    single_eop_data = {c: [] for c in all_conditions}
+    field_counts = {c: [] for c in all_conditions}
 
-for folder in fields_processed:
-    condition = folder_map[folder]
-    count = field_cell_counts[folder]
-    counts_by_condition[condition].append(count)
+    all_available_folders = os.listdir(input_dir)
 
-data_for_df = {
-    cond: pd.Series(counts_by_condition[cond])
-    for cond in all_conditions
-}
+    # 3. PROCESS BY CONDITION
+    for condition in all_conditions:
+        replicate_prefixes = condition_to_replicates[condition]
+        
+        for prefix in replicate_prefixes:
+            replicate_cell_total = 0
+            target_folders = [f for f in all_available_folders if f.startswith(prefix)]
+            
+            # Even if target_folders is empty, we must process the logic to maintain spacer sync
+            for folder in sorted(target_folders):
+                folder_path = os.path.join(input_dir, folder)
+                cell_files = sorted(glob.glob(os.path.join(folder_path, 'cell_*.csv')))
 
-df_field_counts = pd.DataFrame(data_for_df)
-df_field_counts = df_field_counts.dropna(how='all')
+                for cell_file in cell_files:
+                    try:
+                        df_cell = pd.read_csv(cell_file)
+                        if df_cell.empty: continue
+                        cell_data = df_cell.iloc[0].to_dict()
+                        c_idx = os.path.basename(cell_file).split('_')[1].split('.')[0]
+                        
+                        bg_mgv = 0.0
+                        bg_path = os.path.join(folder_path, f'background_for_cell_{c_idx}.csv')
+                        if os.path.exists(bg_path):
+                            bg_mgv = pd.read_csv(bg_path, index_col=0).iloc[0].get('Mean', 0.0)
 
-csv_file_field_counts = os.path.join(output_dir, 'cells_per_field.csv')
-df_field_counts.to_csv(csv_file_field_counts, index=False)
-print(f"Saved processed cell counts per field (wide format) to: {csv_file_field_counts}")
+                        cell_data['Mean'] -= bg_mgv
+                        for col in ['IntDen', 'RawIntDen']:
+                            if col in cell_data: cell_data[col] -= (bg_mgv * cell_data['Area'])
 
-print("\nData consolidation complete. The combined data is in the 'combined_output' directory.")
+                        nuc_path = os.path.join(folder_path, f'nuclei_for_cell_{c_idx}.csv')
+                        df_nuc = pd.read_csv(nuc_path) if os.path.exists(nuc_path) else pd.DataFrame()
+                        
+                        cur_derived = {p: np.nan for p in track_params}
+                        num_nucs = len(df_nuc)
+                        cur_derived["#nuclei"] = num_nucs
+
+                        if not df_nuc.empty:
+                            replicate_cell_total += 1
+                            df_nuc['Mean'] -= bg_mgv
+                            for col in ['IntDen', 'RawIntDen']:
+                                if col in df_nuc.columns: df_nuc[col] -= (bg_mgv * df_nuc['Area'])
+
+                            if num_nucs == 1: cur_derived['CoV_nuclei_area'] = 0.0
+                            elif num_nucs > 1:
+                                ma, sa = df_nuc['Area'].mean(), df_nuc['Area'].std()
+                                cur_derived['CoV_nuclei_area'] = (sa / ma) * 100 if ma != 0 else 0.0
+
+                            for p in BASE_PARAMETERS_ALL:
+                                single_nuc_data[p][condition].extend(df_nuc[p].tolist())
+                                cur_derived[f'{PARAMETER_MAP.get(p, p)}_average_nuclei'] = df_nuc[p].mean()
+                            
+                            for _, r in df_nuc.iterrows():
+                                single_eop_data[condition].append(calculate_eop(r.get('Perim.', 0), r.get('Area', 0)))
+
+                            cur_derived['area_nuclei'] = df_nuc['Area'].sum()
+                            cur_derived['ID_nuclei'] = df_nuc['IntDen'].sum() if 'IntDen' in df_nuc.columns else 0.0
+                            cur_derived['RawIntDen_nuclei'] = df_nuc['RawIntDen'].sum() if 'RawIntDen' in df_nuc.columns else 0.0
+                            cur_derived['MGV_nuclei'] = safe_ratio(cur_derived['ID_nuclei'], cur_derived['area_nuclei'])
+                            cur_derived['StdDev_nuclei'] = df_nuc['StdDev'].mean() if 'StdDev' in df_nuc.columns else np.nan
+
+                        cyto_path = os.path.join(folder_path, f'cytoplasm_for_cell_{c_idx}.csv')
+                        if os.path.exists(cyto_path):
+                            df_cyto = pd.read_csv(cyto_path).iloc[0]
+                            cur_derived['area_cytoplasm'] = df_cyto['Area']
+                            cur_derived['MGV_cytoplasm'] = df_cyto['Mean'] - bg_mgv
+                            cur_derived['ID_cytoplasm'] = df_cyto['IntDen'] - (bg_mgv * df_cyto['Area'])
+                            cur_derived['StdDev_cytoplasm'] = df_cyto['StdDev']
+
+                        cur_derived['Eop'] = calculate_eop(cell_data.get('Perim.', 0), cell_data.get('Area', 0))
+                        for par in BASE_PARAMETERS_FOR_RATIO:
+                            m = PARAMETER_MAP.get(par, par)
+                            nv = cur_derived['area_nuclei'] if par == 'Area' else cur_derived.get(f'{m}_nuclei')
+                            cur_derived[f'{m}_nuclei_cell_ratio'] = safe_ratio(nv, cell_data.get(par))
+                            if par != 'RawIntDen':
+                                cv = cur_derived['area_cytoplasm'] if par == 'Area' else cur_derived.get(f'{m}_cytoplasm')
+                                cur_derived[f'{m}_nuclei_cytoplasm_ratio'] = safe_ratio(nv, cv)
+
+                        for p in BASE_PARAMETERS_ALL: all_data[condition][p].append(cell_data.get(p, np.nan))
+                        for p in track_params:
+                            if p not in BASE_PARAMETERS_ALL: all_data[condition][p].append(cur_derived[p])
+                    except Exception: continue
+
+            # --- APPLY REPLICATE SPACER (Ensures every prefix has a closing spacer) ---
+            field_counts[condition].extend([replicate_cell_total, np.nan])
+            for p in track_params: all_data[condition][p].append(np.nan)
+            for p in BASE_PARAMETERS_ALL: single_nuc_data[p][condition].append(np.nan)
+            single_eop_data[condition].append(np.nan)
+
+    # 4. SAVE OUTPUTS
+    for p in INTENSITY_PARAMETERS_RAW + INTENSITY_PARAMETERS_DERIVED:
+        for c in all_conditions: all_data[c][p] = apply_floor_correction(all_data[c][p])
+
+    for p in track_params:
+        df = pd.DataFrame({c: pd.Series(all_data[c][p]) for c in all_conditions})
+        fname = PARAMETER_MAP.get(p, p).replace("#", "Number_")
+        df.to_csv(os.path.join(output_dir, f'combined_{fname}.csv'), index=False)
+
+    for p in BASE_PARAMETERS_ALL:
+        df = pd.DataFrame({c: pd.Series(single_nuc_data[p][c]) for c in all_conditions})
+        df.to_csv(os.path.join(output_dir, f'combined_{PARAMETER_MAP.get(p, p)}_single_nuclei.csv'), index=False)
+
+    pd.DataFrame({c: pd.Series(single_eop_data[c]) for c in all_conditions}).to_csv(os.path.join(output_dir, 'combined_Eop_single_nuclei.csv'), index=False)
+    pd.DataFrame({c: pd.Series(field_counts[c]) for c in all_conditions}).to_csv(os.path.join(output_dir, 'cells_per_field.csv'), index=False)
+    
+    m_d = {c: pd.Series(all_data[c]['Mean']) for c in all_conditions}
+    s_d = {c: pd.Series(all_data[c]['StdDev']) for c in all_conditions}
+    pd.DataFrame({c: s_d[c]/m_d[c] for c in all_conditions}).to_csv(os.path.join(output_dir, 'combined_CoV_cell.csv'), index=False)
+
+print("Process finished. Alignment gremlin fixed.")
